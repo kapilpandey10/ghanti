@@ -2,127 +2,171 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ghanti React | Shake Pro</title>
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Ghanti Pro | Mobile Native Experience</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @keyframes swing {
+        /* Native-style active states */
+        .tap-highlight-none { -webkit-tap-highlight-color: transparent; }
+        
+        @keyframes bell-shake {
             0% { transform: rotate(0); }
-            20% { transform: rotate(20deg); }
-            40% { transform: rotate(-15deg); }
-            60% { transform: rotate(10deg); }
-            80% { transform: rotate(-5deg); }
+            15% { transform: rotate(25deg); }
+            30% { transform: rotate(-20deg); }
+            45% { transform: rotate(15deg); }
+            60% { transform: rotate(-10deg); }
+            75% { transform: rotate(5deg); }
             100% { transform: rotate(0); }
         }
-        .animate-swing { animation: swing 0.4s ease-in-out; }
-        .bg-temple { background: radial-gradient(circle at center, #2c1e12 0%, #000000 100%); }
+        .animate-bell { animation: bell-shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
+
+        /* Smooth gradient pulse for the background */
+        .bg-mesh {
+            background-color: #050505;
+            background-image: radial-gradient(at 50% 50%, #1a1500 0%, #050505 100%);
+        }
     </style>
 </head>
-<body class="bg-temple text-white overflow-hidden">
+<body class="bg-mesh text-white overflow-hidden tap-highlight-none select-none">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useCallback } = React;
 
         const GhantiApp = () => {
-            const [isActive, setIsActive] = useState(false);
+            const [status, setStatus] = useState('IDLE'); // IDLE, ACTIVE, ERROR
             const [isRinging, setIsRinging] = useState(false);
-            const [error, setError] = useState("");
+            const [ringCount, setRingCount] = useState(0);
+            
             const audioCtx = useRef(null);
+            const lastShake = useRef(0);
 
-            // Audio Synthesis Logic
-            const playSound = () => {
+            // Optimized Audio Synthesis with high-frequency 'shimmer'
+            const playBellSound = useCallback(() => {
                 if (!audioCtx.current) audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
                 if (audioCtx.current.state === 'suspended') audioCtx.current.resume();
 
                 const now = audioCtx.current.currentTime;
-                // Creating a rich, harmonic bell sound
-                [440, 659, 880, 1318].forEach((freq, i) => {
+                const masterGain = audioCtx.current.createGain();
+                masterGain.gain.setValueAtTime(0.5, now);
+                masterGain.gain.exponentialRampToValueAtTime(0.001, now + 2);
+                masterGain.connect(audioCtx.current.destination);
+
+                // Fundamental and Harmonics for a 'Temple Bell' depth
+                [523.25, 1046.50, 1567.98, 2093.00].forEach((freq, i) => {
                     const osc = audioCtx.current.createOscillator();
-                    const gain = audioCtx.current.createGain();
-                    
-                    osc.type = i % 2 === 0 ? 'sine' : 'triangle';
+                    osc.type = i === 0 ? 'sine' : 'triangle';
                     osc.frequency.setValueAtTime(freq, now);
                     
-                    gain.gain.setValueAtTime(0.2 / (i + 1), now);
-                    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+                    const g = audioCtx.current.createGain();
+                    g.gain.setValueAtTime(0.3 / (i + 1), now);
+                    g.gain.exponentialRampToValueAtTime(0.01, now + (1.5 - i * 0.2));
                     
-                    osc.connect(gain);
-                    gain.connect(audioCtx.current.destination);
+                    osc.connect(g);
+                    g.connect(masterGain);
                     osc.start();
-                    osc.stop(now + 1.2);
+                    osc.stop(now + 2);
                 });
 
-                // Haptic Feedback (Vibration)
-                if ("vibrate" in navigator) navigator.vibrate(100);
-            };
+                if ("vibrate" in navigator) navigator.vibrate([50, 30, 50]);
+            }, []);
 
-            const triggerRing = () => {
-                if (isRinging) return;
+            const trigger = useCallback(() => {
+                const now = Date.now();
+                if (now - lastShake.current < 600) return; // Debounce to prevent sound clipping
+                
+                lastShake.current = now;
                 setIsRinging(true);
-                playSound();
-                setTimeout(() => setIsRinging(false), 400);
-            };
+                setRingCount(prev => prev + 1);
+                playBellSound();
+                setTimeout(() => setIsRinging(false), 500);
+            }, [playBellSound]);
 
-            const handlePermission = async () => {
+            const requestAccess = async () => {
                 try {
                     if (typeof DeviceMotionEvent.requestPermission === 'function') {
-                        const permission = await DeviceMotionEvent.requestPermission();
-                        if (permission === 'granted') setupSensor();
-                        else setError("Permission denied.");
+                        const res = await DeviceMotionEvent.requestPermission();
+                        if (res === 'granted') {
+                            startSensors();
+                            setStatus('ACTIVE');
+                        }
                     } else {
-                        setupSensor(); // Android / Desktop
+                        startSensors();
+                        setStatus('ACTIVE');
                     }
-                    setIsActive(true);
-                } catch (err) {
-                    setError("Sensors not available on this device.");
+                    // Audio must be initialized via user gesture
+                    playBellSound(); 
+                } catch (e) {
+                    setStatus('ERROR');
                 }
             };
 
-            const setupSensor = () => {
-                let lastX, lastY, lastZ;
-                const threshold = 18; // Shake intensity
-
+            const startSensors = () => {
+                let threshold = 25; 
                 window.addEventListener('devicemotion', (e) => {
-                    const { x, y, z } = e.accelerationIncludingGravity;
-                    if (lastX !== undefined) {
-                        const delta = Math.abs(x - lastX) + Math.abs(y - lastY) + Math.abs(z - lastZ);
-                        if (delta > threshold) triggerRing();
-                    }
-                    lastX = x; lastY = y; lastZ = z;
+                    const acc = e.accelerationIncludingGravity;
+                    if (!acc) return;
+                    const magnitude = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
+                    if (magnitude > threshold) trigger();
                 });
             };
 
             return (
-                <div className="flex flex-col items-center justify-center h-screen space-y-12">
-                    <div className="text-center">
-                        <h1 className="text-6xl font-black tracking-tighter text-yellow-500 mb-2">GHANTI</h1>
-                        <p className="text-gray-400 font-mono text-sm uppercase tracking-widest">Digital Resonance</p>
+                <div className="flex flex-col justify-between h-screen w-full px-6 py-12 pb-safe">
+                    {/* Header */}
+                    <div className="text-center mt-8">
+                        <h1 className="text-xs uppercase tracking-[0.4em] text-yellow-500/60 font-bold mb-1">
+                            Acoustic Feedback System
+                        </h1>
+                        <div className="text-4xl font-light tracking-widest text-white">GHANTI</div>
                     </div>
 
-                    <div 
-                        className={`text-9xl cursor-pointer transition-transform duration-75 ${isRinging ? 'animate-swing scale-110' : 'hover:scale-105'}`}
-                        onClick={isActive ? triggerRing : handlePermission}
-                    >
-                        🔔
-                    </div>
-
-                    {!isActive ? (
-                        <div className="flex flex-col items-center gap-4">
-                            <button 
-                                onClick={handlePermission}
-                                className="bg-yellow-500 text-black px-8 py-4 rounded-full font-bold uppercase tracking-widest shadow-[0_0_20px_rgba(234,179,8,0.5)] active:scale-95 transition-all"
-                            >
-                                Calibrate Sensor
-                            </button>
-                            {error && <p className="text-red-500 text-xs">{error}</p>}
+                    {/* Main Interaction Area */}
+                    <div className="flex-1 flex flex-col items-center justify-center relative">
+                        <div 
+                            className={`text-[160px] leading-none transition-all duration-300 drop-shadow-[0_0_40px_rgba(234,179,8,0.2)]
+                                ${isRinging ? 'animate-bell scale-110' : 'scale-100'}
+                                ${status === 'IDLE' ? 'grayscale opacity-30' : ''}`}
+                            onClick={status === 'ACTIVE' ? trigger : requestAccess}
+                        >
+                            🔔
                         </div>
-                    ) : (
-                        <p className="text-yellow-500/50 animate-pulse font-medium">READY: SHAKE TO RING</p>
-                    )}
+                        
+                        {status === 'ACTIVE' && (
+                            <div className="absolute -bottom-10 text-center">
+                                <div className="text-4xl font-black text-yellow-500/20">{ringCount}</div>
+                                <div className="text-[10px] uppercase tracking-tighter text-white/30">Total Rings</div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Footer / Controls */}
+                    <div className="w-full max-w-xs mx-auto mb-4">
+                        {status === 'IDLE' ? (
+                            <button 
+                                onClick={requestAccess}
+                                className="w-full bg-white text-black py-5 rounded-2xl font-bold uppercase tracking-widest text-sm shadow-xl active:scale-95 transition-transform"
+                            >
+                                Connect Sensors
+                            </button>
+                        ) : (
+                            <div className="text-center space-y-2">
+                                <div className="flex justify-center gap-1">
+                                    {[1,2,3].map(i => (
+                                        <div key={i} className="w-1 h-1 rounded-full bg-yellow-500 animate-pulse" />
+                                    ))}
+                                </div>
+                                <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">Listening for Motion</p>
+                            </div>
+                        )}
+                        
+                        {status === 'ERROR' && (
+                            <p className="text-red-500 text-center text-xs mt-4 uppercase">Sensor Access Blocked</p>
+                        )}
+                    </div>
                 </div>
             );
         };
