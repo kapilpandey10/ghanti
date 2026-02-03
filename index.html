@@ -3,164 +3,245 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Ghanti Pro Max | Interactive Simulator</title>
+    <title>Ghanti | Professional Bell Simulator</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .tap-highlight-none { -webkit-tap-highlight-color: transparent; }
-        input[type='range'] { -webkit-appearance: none; background: #333; height: 4px; border-radius: 2px; }
-        input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; background: #EAB308; border-radius: 50%; }
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;800&display=swap');
+        
+        body { 
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: #050505;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
+
+        .bell-path {
+            transition: fill 0.3s ease, stroke 0.3s ease;
+        }
+
+        /* Glassmorphism for the control panel */
+        .glass-panel {
+            background: rgba(20, 20, 20, 0.8);
+            backdrop-filter: blur(12px);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Range input styling */
+        input[type="range"] {
+            -webkit-appearance: none;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: white;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
     </style>
 </head>
-<body class="bg-[#0a0a0a] text-white overflow-hidden select-none tap-highlight-none">
+<body class="text-white overflow-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef, useCallback } = React;
-        const { motion, AnimatePresence } = FramerMotion;
 
         const GhantiApp = () => {
-            // State Management
-            const [status, setStatus] = useState('IDLE');
+            // --- State Management ---
+            const [status, setStatus] = useState('IDLE'); // IDLE, ACTIVE
             const [isRinging, setIsRinging] = useState(false);
             const [settings, setSettings] = useState({
-                color: '#EAB308',
-                volume: 0.5,
-                timer: 0 // In seconds, 0 = manual only
+                color: '#EAB308', // Default Gold
+                volume: 0.6,
+                timer: 0 // 0 = Manual
             });
-            const [showSettings, setShowSettings] = useState(false);
-            
+            const [ringCount, setRingCount] = useState(0);
+
             const audioCtx = useRef(null);
             const timerRef = useRef(null);
+            const lastShake = useRef(0);
 
-            // Physical Sound Model: The "Real" Bell
-            const playRealBell = useCallback(() => {
-                if (!audioCtx.current) audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
-                const now = audioCtx.current.currentTime;
+            // --- Audio Engine (Physical Modeling) ---
+            const playSound = useCallback(() => {
+                if (!audioCtx.current) {
+                    audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
+                }
                 
-                const masterGain = audioCtx.current.createGain();
-                masterGain.gain.setValueAtTime(settings.volume, now);
-                masterGain.gain.exponentialRampToValueAtTime(0.001, now + 3);
-                masterGain.connect(audioCtx.current.destination);
+                if (audioCtx.current.state === 'suspended') {
+                    audioCtx.current.resume();
+                }
 
-                // Frequencies for a rich Bronze Temple Bell (non-harmonic overtones)
-                const components = [
-                    { f: 250, g: 0.5, d: 2.5 }, // Strike
-                    { f: 500, g: 0.3, d: 3.0 }, // Hum
-                    { f: 780, g: 0.2, d: 1.5 }, // Tierce
-                    { f: 1200, g: 0.1, d: 1.0 } // Shimmer
-                ];
+                const now = audioCtx.current.currentTime;
+                const gainNode = audioCtx.current.createGain();
+                gainNode.gain.setValueAtTime(settings.volume, now);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, now + 2.5);
+                gainNode.connect(audioCtx.current.destination);
 
-                components.forEach(comp => {
+                // Complex frequencies for realistic metal resonance
+                const frequencies = [350, 700, 1100, 1500]; 
+                frequencies.forEach((f, i) => {
                     const osc = audioCtx.current.createOscillator();
-                    const g = audioCtx.current.createGain();
-                    osc.type = 'sine';
-                    osc.frequency.setValueAtTime(comp.f, now);
-                    g.gain.setValueAtTime(comp.g, now);
-                    g.gain.exponentialRampToValueAtTime(0.01, now + comp.d);
-                    osc.connect(g);
-                    g.connect(masterGain);
+                    osc.type = i === 0 ? 'sine' : 'triangle';
+                    osc.frequency.setValueAtTime(f, now);
+                    
+                    const localGain = audioCtx.current.createGain();
+                    localGain.gain.setValueAtTime(0.4 / (i + 1), now);
+                    localGain.gain.exponentialRampToValueAtTime(0.01, now + (2 - i * 0.4));
+                    
+                    osc.connect(localGain);
+                    localGain.connect(gainNode);
                     osc.start();
-                    osc.stop(now + comp.d);
+                    osc.stop(now + 2.5);
                 });
 
-                if ("vibrate" in navigator) navigator.vibrate(80);
+                if ("vibrate" in navigator) navigator.vibrate(100);
             }, [settings.volume]);
 
-            const trigger = useCallback(() => {
-                setIsRinging(true);
-                playRealBell();
-                setTimeout(() => setIsRinging(false), 500);
-            }, [playRealBell]);
-
-            // Timer Logic
-            useEffect(() => {
-                if (settings.timer > 0 && status === 'ACTIVE') {
-                    timerRef.current = setInterval(trigger, settings.timer * 1000);
-                } else {
-                    clearInterval(timerRef.current);
-                }
-                return () => clearInterval(timerRef.current);
-            }, [settings.timer, status, trigger]);
-
-            const setupSensors = async () => {
-                if (typeof DeviceMotionEvent?.requestPermission === 'function') {
-                    const res = await DeviceMotionEvent.requestPermission();
-                    if (res !== 'granted') return;
-                }
+            const triggerRing = useCallback(() => {
+                const now = Date.now();
+                if (now - lastShake.current < 500) return; // Prevention of double triggers
                 
+                lastShake.current = now;
+                setIsRinging(true);
+                setRingCount(prev => prev + 1);
+                playSound();
+                setTimeout(() => setIsRinging(false), 600);
+            }, [playSound]);
+
+            // --- Sensor Initialization ---
+            const initSensors = async () => {
+                try {
+                    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                        const permission = await DeviceMotionEvent.requestPermission();
+                        if (permission === 'granted') startMotionListener();
+                    } else {
+                        startMotionListener();
+                    }
+                    setStatus('ACTIVE');
+                    triggerRing(); // Play initial sound to unlock AudioContext
+                } catch (e) {
+                    alert("Motion sensors blocked. Using touch-only mode.");
+                    setStatus('ACTIVE');
+                }
+            };
+
+            const startMotionListener = () => {
+                let threshold = 22;
                 window.addEventListener('devicemotion', (e) => {
                     const acc = e.accelerationIncludingGravity;
                     if (!acc) return;
                     const magnitude = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
-                    if (magnitude > 22) trigger();
+                    if (magnitude > threshold) triggerRing();
                 });
-                
-                setStatus('ACTIVE');
-                playRealBell(); // Init audio
             };
 
+            // --- Timer Logic ---
+            useEffect(() => {
+                if (settings.timer > 0 && status === 'ACTIVE') {
+                    timerRef.current = setInterval(triggerRing, settings.timer * 1000);
+                } else {
+                    clearInterval(timerRef.current);
+                }
+                return () => clearInterval(timerRef.current);
+            }, [settings.timer, status, triggerRing]);
+
             return (
-                <div className="flex flex-col h-screen w-full px-6 py-12">
-                    <div className="text-center">
-                        <h1 className="text-3xl font-black tracking-tighter" style={{color: settings.color}}>GHANTI PRO</h1>
-                        <p className="text-[10px] text-gray-500 uppercase tracking-[0.3em]">Advanced Sonic Simulation</p>
+                <div className="flex flex-col h-screen w-full justify-between pb-safe">
+                    {/* Header */}
+                    <div className="pt-16 text-center">
+                        <h1 className="text-4xl font-extrabold tracking-tighter" style={{ color: settings.color }}>GHANTI</h1>
+                        <p className="text-[10px] uppercase tracking-[0.4em] opacity-40">Professional Grade</p>
                     </div>
 
-                    <div className="flex-1 flex items-center justify-center relative">
-                        <motion.div 
-                            animate={isRinging ? { 
-                                rotate: [0, 30, -25, 15, -10, 0],
-                                scale: [1, 1.1, 1] 
-                            } : { rotate: 0 }}
-                            transition={{ duration: 0.5 }}
-                            onClick={status === 'IDLE' ? setupSensors : trigger}
-                            className="cursor-pointer"
+                    {/* Bell Section */}
+                    <div className="flex-1 flex flex-col items-center justify-center">
+                        <div 
+                            onClick={status === 'IDLE' ? initSensors : triggerRing}
+                            className={`transition-all duration-500 transform cursor-pointer
+                                ${isRinging ? 'rotate-12 scale-110' : 'rotate-0 scale-100'}
+                                ${status === 'IDLE' ? 'opacity-20 blur-sm' : 'opacity-100'}
+                            `}
                         >
-                            <svg width="200" height="200" viewBox="0 0 24 24" fill="none" stroke={settings.color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" fill={settings.color + '20'} />
-                                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                            <svg width="220" height="220" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path 
+                                    className="bell-path"
+                                    d="M18 8C18 6.4087 17.3679 4.88258 16.2426 3.75736C15.1174 2.63214 13.5913 2 12 2C10.4087 2 8.88258 2.63214 7.75736 3.75736C6.63214 4.88258 6 6.4087 6 8C6 15 3 17 3 17H21C21 17 18 15 18 8Z" 
+                                    stroke={settings.color} 
+                                    strokeWidth="1.5" 
+                                    fill={isRinging ? settings.color + '44' : 'transparent'}
+                                />
+                                <path d="M10.3 21C10.62 21.51 11.16 21.86 11.76 21.97C12.37 22.08 12.99 21.95 13.5 21.6" stroke={settings.color} strokeWidth="1.5" strokeLinecap="round"/>
                             </svg>
-                        </motion.div>
+                        </div>
+                        {status === 'ACTIVE' && (
+                            <div className="mt-8 text-center animate-pulse">
+                                <span className="text-4xl font-light opacity-20">{ringCount}</span>
+                            </div>
+                        )}
                     </div>
 
-                    {/* Bottom Controls */}
-                    <div className="bg-[#151515] p-6 rounded-3xl border border-white/5 space-y-6">
-                        <div className="flex justify-between items-center">
-                            <span className="text-xs font-bold uppercase text-gray-400">Settings</span>
-                            <button onClick={() => setShowSettings(!showSettings)} className="text-xs text-yellow-500">
-                                {showSettings ? 'Close' : 'Adjust'}
+                    {/* Controls Section */}
+                    <div className="glass-panel p-8 rounded-t-[40px] space-y-6">
+                        {status === 'IDLE' ? (
+                            <button 
+                                onClick={initSensors}
+                                className="w-full py-5 bg-white text-black rounded-2xl font-bold uppercase tracking-widest text-sm active:scale-95 transition-transform"
+                            >
+                                Activate System
                             </button>
-                        </div>
-
-                        {showSettings && (
-                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="space-y-4 overflow-hidden">
-                                <div>
-                                    <label className="text-[10px] uppercase text-gray-500 block mb-2">Bell Color</label>
+                        ) : (
+                            <div className="space-y-6">
+                                {/* Color Picker */}
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">App Theme</span>
                                     <div className="flex gap-3">
-                                        {['#EAB308', '#EF4444', '#3B82F6', '#10B981', '#FFFFFF'].map(c => (
-                                            <div key={c} onClick={() => setSettings({...settings, color: c})} className="w-8 h-8 rounded-full border-2 border-transparent" style={{backgroundColor: c, borderColor: settings.color === c ? 'white' : 'transparent'}} />
+                                        {['#EAB308', '#3B82F6', '#EF4444', '#10B981', '#FFFFFF'].map(c => (
+                                            <button 
+                                                key={c} 
+                                                onClick={() => setSettings(s => ({...s, color: c}))}
+                                                className={`w-6 h-6 rounded-full border-2 ${settings.color === c ? 'border-white' : 'border-transparent'}`}
+                                                style={{ backgroundColor: c }}
+                                            />
                                         ))}
                                     </div>
                                 </div>
-                                <div>
-                                    <label className="text-[10px] uppercase text-gray-500 block mb-1">Volume: {Math.round(settings.volume * 100)}%</label>
-                                    <input type="range" className="w-full" min="0" max="1" step="0.1" value={settings.volume} onChange={(e) => setSettings({...settings, volume: parseFloat(e.target.value)})} />
+
+                                {/* Volume Slider */}
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-50">
+                                        <span>Acoustic Volume</span>
+                                        <span>{Math.round(settings.volume * 100)}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="1" step="0.01" 
+                                        value={settings.volume}
+                                        onChange={(e) => setSettings(s => ({...s, volume: parseFloat(e.target.value)}))}
+                                        className="w-full"
+                                    />
                                 </div>
-                                <div>
-                                    <label className="text-[10px] uppercase text-gray-500 block mb-1">Auto-Timer: {settings.timer}s</label>
-                                    <input type="range" className="w-full" min="0" max="10" step="1" value={settings.timer} onChange={(e) => setSettings({...settings, timer: parseInt(e.target.value)})} />
+
+                                {/* Timer Slider */}
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-50">
+                                        <span>Auto-Interval</span>
+                                        <span>{settings.timer === 0 ? 'Manual' : settings.timer + 's'}</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="30" step="1" 
+                                        value={settings.timer}
+                                        onChange={(e) => setSettings(s => ({...s, timer: parseInt(e.target.value)}))}
+                                        className="w-full"
+                                    />
                                 </div>
-                            </motion.div>
-                        )}
-                        
-                        {status === 'IDLE' && (
-                            <button onClick={setupSensors} className="w-full py-4 bg-white text-black font-bold rounded-xl uppercase tracking-widest text-xs">
-                                Activate Ghanti
-                            </button>
+                            </div>
                         )}
                     </div>
                 </div>
