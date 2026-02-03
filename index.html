@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ghanti React | Shake Pro</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes swing {
+            0% { transform: rotate(0); }
+            20% { transform: rotate(20deg); }
+            40% { transform: rotate(-15deg); }
+            60% { transform: rotate(10deg); }
+            80% { transform: rotate(-5deg); }
+            100% { transform: rotate(0); }
+        }
+        .animate-swing { animation: swing 0.4s ease-in-out; }
+        .bg-temple { background: radial-gradient(circle at center, #2c1e12 0%, #000000 100%); }
+    </style>
+</head>
+<body class="bg-temple text-white overflow-hidden">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const GhantiApp = () => {
+            const [isActive, setIsActive] = useState(false);
+            const [isRinging, setIsRinging] = useState(false);
+            const [error, setError] = useState("");
+            const audioCtx = useRef(null);
+
+            // Audio Synthesis Logic
+            const playSound = () => {
+                if (!audioCtx.current) audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.current.state === 'suspended') audioCtx.current.resume();
+
+                const now = audioCtx.current.currentTime;
+                // Creating a rich, harmonic bell sound
+                [440, 659, 880, 1318].forEach((freq, i) => {
+                    const osc = audioCtx.current.createOscillator();
+                    const gain = audioCtx.current.createGain();
+                    
+                    osc.type = i % 2 === 0 ? 'sine' : 'triangle';
+                    osc.frequency.setValueAtTime(freq, now);
+                    
+                    gain.gain.setValueAtTime(0.2 / (i + 1), now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+                    
+                    osc.connect(gain);
+                    gain.connect(audioCtx.current.destination);
+                    osc.start();
+                    osc.stop(now + 1.2);
+                });
+
+                // Haptic Feedback (Vibration)
+                if ("vibrate" in navigator) navigator.vibrate(100);
+            };
+
+            const triggerRing = () => {
+                if (isRinging) return;
+                setIsRinging(true);
+                playSound();
+                setTimeout(() => setIsRinging(false), 400);
+            };
+
+            const handlePermission = async () => {
+                try {
+                    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                        const permission = await DeviceMotionEvent.requestPermission();
+                        if (permission === 'granted') setupSensor();
+                        else setError("Permission denied.");
+                    } else {
+                        setupSensor(); // Android / Desktop
+                    }
+                    setIsActive(true);
+                } catch (err) {
+                    setError("Sensors not available on this device.");
+                }
+            };
+
+            const setupSensor = () => {
+                let lastX, lastY, lastZ;
+                const threshold = 18; // Shake intensity
+
+                window.addEventListener('devicemotion', (e) => {
+                    const { x, y, z } = e.accelerationIncludingGravity;
+                    if (lastX !== undefined) {
+                        const delta = Math.abs(x - lastX) + Math.abs(y - lastY) + Math.abs(z - lastZ);
+                        if (delta > threshold) triggerRing();
+                    }
+                    lastX = x; lastY = y; lastZ = z;
+                });
+            };
+
+            return (
+                <div className="flex flex-col items-center justify-center h-screen space-y-12">
+                    <div className="text-center">
+                        <h1 className="text-6xl font-black tracking-tighter text-yellow-500 mb-2">GHANTI</h1>
+                        <p className="text-gray-400 font-mono text-sm uppercase tracking-widest">Digital Resonance</p>
+                    </div>
+
+                    <div 
+                        className={`text-9xl cursor-pointer transition-transform duration-75 ${isRinging ? 'animate-swing scale-110' : 'hover:scale-105'}`}
+                        onClick={isActive ? triggerRing : handlePermission}
+                    >
+                        🔔
+                    </div>
+
+                    {!isActive ? (
+                        <div className="flex flex-col items-center gap-4">
+                            <button 
+                                onClick={handlePermission}
+                                className="bg-yellow-500 text-black px-8 py-4 rounded-full font-bold uppercase tracking-widest shadow-[0_0_20px_rgba(234,179,8,0.5)] active:scale-95 transition-all"
+                            >
+                                Calibrate Sensor
+                            </button>
+                            {error && <p className="text-red-500 text-xs">{error}</p>}
+                        </div>
+                    ) : (
+                        <p className="text-yellow-500/50 animate-pulse font-medium">READY: SHAKE TO RING</p>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<GhantiApp />);
+    </script>
+</body>
+</html>
